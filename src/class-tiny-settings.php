@@ -20,6 +20,7 @@
 
 class Tiny_Settings extends Tiny_WP_Base {
     const PREFIX = 'tinypng_';
+    const DUMMY_SIZE = '_tiny_dummy';
 
     protected static function get_prefixed_name($name) {
         return self::PREFIX . $name;
@@ -28,31 +29,34 @@ class Tiny_Settings extends Tiny_WP_Base {
     private $sizes;
     private $tinify_sizes;
 
-    public function __construct() {
-        parent::__construct();
-        if (is_multisite()) {
-            add_action('network_admin_menu', $this->get_method('register_multisite_settings'));
-            add_action('network_admin_edit_save_tinypng_multisite_settings', $this->get_method('save_multisite_settings'), 10, 0);
-        }
-    }
-
     public function admin_init() {
         $section = self::get_prefixed_name('settings');
         add_settings_section($section, self::translate('PNG and JPEG compression'), $this->get_method('render_section'), 'media');
 
-        if (tiny_is_network_activated()) {
-            $field = self::get_prefixed_name('api_key');
-            register_setting('media', $field);
-            add_settings_field($field, self::translate('Multisite API key'), $this->get_method('render_api_key'), 'media', $section, array('label_for' => $field));
-        } else {
-            $field = self::get_prefixed_name('api_key');
-            register_setting('media', $field);
-            add_settings_field($field, self::translate('TinyPNG API key'), $this->get_method('render_api_key'), 'media', $section, array('label_for' => $field));
-        }
+        $field = self::get_prefixed_name('api_key');
+        register_setting('media', $field);
+        $name = self::is_network_activated() ? 'Multisite API key' : 'TinyPNG API key';
+        add_settings_field($field, self::translate($name), $this->get_method('render_api_key'), 'media', $section, array('label_for' => $field));
 
         $field = self::get_prefixed_name('sizes');
         register_setting('media', $field);
         add_settings_field($field, self::translate('File compression'), $this->get_method('render_sizes'), 'media', $section);
+    }
+
+    public function multisite_init() {
+        add_action('network_admin_menu', $this->get_method('register_multisite_settings'));
+        add_action('network_admin_edit_save_tinypng_multisite_settings', $this->get_method('save_multisite_settings'), 10, 0);
+    }
+
+    public function save_multisite_settings() {
+        $options = array('page' => self::get_prefixed_name('multisite_settings'));
+        if (array_key_exists(self::get_prefixed_name('api_key'), $_POST)) {
+            $key = filter_var($_POST[self::get_prefixed_name('api_key')], FILTER_SANITIZE_STRING);
+            update_site_option(self::get_prefixed_name('api_key'), $key);
+            $options['updated'] = 'true';
+        }
+        wp_redirect(add_query_arg($options, network_admin_url('settings.php')));
+        exit();
     }
 
     public function register_multisite_settings() {
@@ -62,29 +66,21 @@ class Tiny_Settings extends Tiny_WP_Base {
     }
 
     public function get_api_key() {
-        $key = $this->get_multisite_api_key();
-        if (empty($key)) {
-            return get_option(self::get_prefixed_name('api_key'));
-        } else {
-            return $key;
+        if (defined('TINY_API_KEY')) {
+            return TINY_API_KEY;
         }
+        $key = $this->get_multisite_api_key();
+        return !empty($key) ? $key : get_option(self::get_prefixed_name('api_key'));
     }
 
     public function get_multisite_api_key() {
-        if (tiny_is_network_activated()) {
-            if (defined('TINY_API_KEY')) {
-                return TINY_API_KEY;
-            } else {
-                $key = get_site_option(self::get_prefixed_name('api_key'));
-                if (!empty($key)) {
-                    return $key;
-                } else {
-                    return NULL;
-                }
-            }
-        } else {
-            return NULL;
+        if (!self::is_network_activated()) {
+            return null;
         }
+        if (defined('TINY_API_KEY')) {
+            return TINY_API_KEY;
+        }
+        return get_site_option(self::get_prefixed_name('api_key'));
     }
 
     protected static function get_intermediate_size($size) {
@@ -112,10 +108,18 @@ class Tiny_Settings extends Tiny_WP_Base {
             return $this->sizes;
         }
 
-        $this->sizes = array();
         $setting = get_option(self::get_prefixed_name('sizes'));
 
+        $size = Tiny_Metadata::ORIGINAL;
+        $this->sizes = array($size => array(
+            'width' => null, 'height' => null,
+            'tinify' => !is_array($setting) || (isset($setting[$size]) && $setting[$size] === 'on'),
+        ));
+
         foreach (get_intermediate_image_sizes() as $size) {
+            if ($size === self::DUMMY_SIZE) {
+                continue;
+            }
             list($width, $height) = self::get_intermediate_size($size);
             if ($width && $height) {
                 $this->sizes[$size] = array(
@@ -139,9 +143,6 @@ class Tiny_Settings extends Tiny_WP_Base {
             }
         }
         return $this->tinify_sizes;
-    }
-
-    public function render_section() {
     }
 
     public function render_multisite_settings() {
@@ -171,37 +172,27 @@ class Tiny_Settings extends Tiny_WP_Base {
         echo '</div>';
     }
 
-    public function save_multisite_settings() {
-        $options = array('page' => self::get_prefixed_name('multisite_settings'));
-        if (array_key_exists(self::get_prefixed_name('api_key'), $_POST)) {
-            $key = filter_var($_POST[self::get_prefixed_name('api_key')], FILTER_SANITIZE_STRING);
-            update_site_option(self::get_prefixed_name('api_key'), $key);
-            $options['updated'] = 'true';
-        }
-        wp_redirect(add_query_arg($options, network_admin_url('settings.php')));
-        exit();
-    }
-
     public function render_multisite_api_key() {
         $field = self::get_prefixed_name('api_key');
         $value = $this->get_multisite_api_key();
-        echo '<input type="text" id="' . $field . '" name="' . $field . '" value="' . htmlspecialchars($value) . '" size="40" ';
-        if (defined('TINY_API_KEY')) { echo 'readonly = "readonly"'; }
-        echo '/>';
-        echo '<p>';
         if (defined('TINY_API_KEY')) {
             echo sprintf(self::translate('The API key has been configured in %s'), 'wp-config.php') . '.';
         } else {
-            $link = '<a href="https://tinypng.com/developers">' . self::translate_escape('TinyPNG Developer section') . '</a>';
-            printf(self::translate_escape('Visit %s to get an API key') . '.', $link);
+            echo '<input type="text" id="' . $field . '" name="' . $field . '" value="' . htmlspecialchars($value) . '" size="40" />';
         }
-        echo '</p>';
+        self::render_link($value);
+    }
+
+    public function render_section() {
     }
 
     public function render_api_key() {
         $field = self::get_prefixed_name('api_key');
         $key = $this->get_api_key();
-        if (tiny_is_network_activated()) {
+        if (defined('TINY_API_KEY')) {
+            echo '<p>' . sprintf(self::translate('The API key has been configured in %s'), 'wp-config.php') . '.</p>';
+            self::render_link($key);
+        } elseif (self::is_network_activated()) {
             $multisite_key = $this->get_multisite_api_key();
             if (empty($multisite_key)) {
                 if (empty($key)) {
@@ -214,25 +205,41 @@ class Tiny_Settings extends Tiny_WP_Base {
             }
         } else {
             echo '<input type="text" id="' . $field . '" name="' . $field . '" value="' . htmlspecialchars($key) . '" size="40" />';
-            if (empty($key)) {
-                echo '<p>';
-                $link = '<a href="https://tinypng.com/developers">' . self::translate_escape('TinyPNG Developer section') . '</a>';
-                printf(self::translate_escape('Visit %s to get an API key') . '.', $link);
-                echo '</p>';
-            }
+            self::render_link($key);
         }
+    }
+
+    private function render_link($key) {
+        echo "<p>";
+        $link = '<a href="https://tinypng.com/developers">' . self::translate_escape('TinyPNG Developer section') . '</a>';
+        if (empty($key)) {
+            printf(self::translate_escape('Visit %s to get an API key') . '.', $link);
+        } else {
+            printf(self::translate_escape('Visit %s to view your usage or upgrade your account') . '.', $link);
+        }
+        echo "</p>";
     }
 
     public function render_sizes() {
         echo '<p>' . self::translate_escape('You can choose to compress different image sizes created by WordPress here') . '.<br/>';
-        echo self::translate_escape('Remember each additional image size will affect your TinyPNG monthly usage') . "!</p>\n";
-        foreach ($this->get_sizes() as $size => $option) {
-            $id = self::get_prefixed_name("sizes_$size");
-            $field = self::get_prefixed_name("sizes[$size]");
-?>
-<p><input type="checkbox" id="<?php echo $id; ?>" name="<?php echo $field ?>" value="on" <?php if ($option['tinify']) { echo ' checked="checked"'; } ?>/>
-<label for="<?php echo $id; ?>"><?php echo $size . " - ${option['width']}x${option['height']}"; ?></label></p>
+        echo self::translate_escape('Remember each additional image size will affect your TinyPNG monthly usage') . "!";?>
+<input type="hidden" name="<?php echo self::get_prefixed_name('sizes[' . self::DUMMY_SIZE .']'); ?>" value="on"/></p>
 <?php
+        foreach ($this->get_sizes() as $size => $option) {
+            $this->render_size_checkbox($size, $option);
         }
+    }
+
+    private function render_size_checkbox($size, $option) {
+        $id = self::get_prefixed_name("sizes_$size");
+        $field = self::get_prefixed_name("sizes[$size]");
+        if ($size === Tiny_Metadata::ORIGINAL) {
+            $label = self::translate_escape("original");
+        } else {
+            $label = $size . " - ${option['width']}x${option['height']}";
+        }?>
+<p><input type="checkbox" id="<?php echo $id; ?>" name="<?php echo $field ?>" value="on" <?php if ($option['tinify']) { echo ' checked="checked"'; } ?>/>
+<label for="<?php echo $id; ?>"><?php echo $label; ?></label></p>
+<?php
     }
 }

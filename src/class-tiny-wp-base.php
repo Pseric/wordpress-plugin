@@ -21,13 +21,24 @@
 abstract class Tiny_WP_Base {
     const NAME = 'tiny-compress-images';
 
+    public static function plugin_file() {
+        return realpath(dirname(__FILE__) . '/../tiny-compress-images.php');
+    }
+
     public static function plugin_version() {
-        $plugin_data = get_plugin_data(dirname(__FILE__) . '/../tiny-compress-images.php');
+        $plugin_data = get_plugin_data(self::plugin_file());
         return $plugin_data['Version'];
     }
 
     public static function plugin_identification() {
         return 'Wordpress/' . $GLOBALS['wp_version'] . ' Tiny/' . self::plugin_version();
+    }
+
+    protected static function is_network_activated() {
+        if (!function_exists( 'is_plugin_active_for_network')) {
+            require_once(ABSPATH . '/wp-admin/includes/plugin.php');
+        }
+        return is_plugin_active_for_network(plugin_basename(self::plugin_file()));
     }
 
     protected static function translate($phrase) {
@@ -41,6 +52,9 @@ abstract class Tiny_WP_Base {
     public function __construct() {
         add_action('init', $this->get_method('init'));
         add_action('admin_init', $this->get_method('admin_init'));
+        if (is_multisite() && self::is_network_activated()) {
+            $this->multisite_init();
+        }
     }
 
     protected function get_method($name) {
@@ -55,6 +69,9 @@ abstract class Tiny_WP_Base {
     }
 
     public function admin_init() {
+    }
+
+    public function multisite_init() {
     }
 
     public function add_admin_notice($message) {

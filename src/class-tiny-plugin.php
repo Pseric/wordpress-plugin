@@ -84,7 +84,9 @@ class Tiny_Plugin extends Tiny_WP_Base {
         $upload_dir = wp_upload_dir();
         $prefix = $upload_dir['basedir'] . '/' . $path_info['dirname'] . '/';
 
-        if (!$tiny_metadata->is_compressed()) {
+        $settings = $this->settings->get_sizes();
+
+        if ($settings[Tiny_Metadata::ORIGINAL]['tinify'] && !$tiny_metadata->is_compressed()) {
             try {
                 $response = $this->compressor->compress_file("$prefix${path_info['basename']}");
                 $tiny_metadata->add_response($response);
@@ -93,7 +95,6 @@ class Tiny_Plugin extends Tiny_WP_Base {
             }
         }
 
-        $settings = $this->settings->get_sizes();
         foreach ($metadata['sizes'] as $size => $info) {
             if (isset($settings[$size]) && $settings[$size]['tinify'] && !$tiny_metadata->is_compressed($size)) {
                 try {
@@ -154,6 +155,7 @@ class Tiny_Plugin extends Tiny_WP_Base {
         if ($column === self::MEDIA_COLUMN) {
             $wp_metadata = wp_get_attachment_metadata($id);
             $wp_sizes = isset($wp_metadata['sizes']) ? array_keys($wp_metadata['sizes']) : array();
+            $wp_sizes[] = Tiny_Metadata::ORIGINAL;
 
             $sizes = array_intersect($wp_sizes, $this->settings->get_tinify_sizes());
 
@@ -172,11 +174,13 @@ class Tiny_Plugin extends Tiny_WP_Base {
                     self::translate_escape('Compress') . '</button>';
                 echo '<div class="spinner"></div>';
             } else {
-                $details = $tiny_metadata->get_value();
                 printf(self::translate_escape('Compressed %d out of %d sizes'), $success, $total);
-                echo '<br/>';
-                echo self::translate_escape('Original size') . ': ' . size_format($details['input']['size']) . '<br/>';
-                echo self::translate_escape('Compressed size') . ': ' . size_format($details['output']['size']);
+                $savings = $tiny_metadata->get_savings();
+                if ($savings['count'] > 0) {
+                    echo '<br/>';
+                    echo self::translate_escape('Total size') . ': ' . size_format($savings['input']) . '<br/>';
+                    echo self::translate_escape('Compressed size') . ': ' . size_format($savings['output']);
+                }
             }
         }
     }
